@@ -5,52 +5,120 @@ import ServerConnectionForm from "@/components/ServerConnectionForm";
 import { Server, Plus, Edit, Trash2, TestTube } from "lucide-react";
 import { useState } from "react";
 import { ServerConnection } from "@/components/ServerConnectionForm";
-
-//todo: remove mock functionality
-const mockConnections: (ServerConnection & { id: string })[] = [
-  {
-    id: '1',
-    name: 'DC01 - Primary Domain Controller',
-    hostname: 'dc01.contoso.com',
-    port: 5985,
-    protocol: 'winrm',
-    username: 'contoso\\administrator',
-    password: '***',
-    useHttps: true,
-    skipCertValidation: false,
-    timeout: 30,
-    roles: ['dc', 'dns']
-  },
-  {
-    id: '2', 
-    name: 'CA01 - Certificate Authority',
-    hostname: 'ca01.contoso.com',
-    port: 5985,
-    protocol: 'winrm',
-    username: 'contoso\\administrator',
-    password: '***',
-    useHttps: true,
-    skipCertValidation: false,
-    timeout: 30,
-    roles: ['ca']
-  }
-];
+import { serverApi } from "@/lib/api";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import type { ServerConnection as DBServerConnection } from "@shared/schema";
 
 export default function ServerConfiguration() {
-  const [connections, setConnections] = useState(mockConnections);
   const [editingConnection, setEditingConnection] = useState<ServerConnection | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const { toast } = useToast();
+
+  // Fetch server connections
+  const { data: dbConnections = [], isLoading } = useQuery({
+    queryKey: ['/api/servers'],
+    queryFn: () => serverApi.getAll(),
+  });
+
+  // Convert DB connections to form format
+  const connections = dbConnections.map((conn: DBServerConnection) => ({
+    id: conn.id,
+    name: conn.name,
+    hostname: conn.hostname,
+    port: conn.port,
+    protocol: conn.protocol as 'winrm' | 'ssh',
+    username: conn.username,
+    password: '***', // Never show real password
+    useHttps: conn.useHttps,
+    skipCertValidation: conn.skipCertValidation,
+    timeout: conn.timeout,
+    roles: conn.roles as string[]
+  }));
+
+  // Create connection mutation
+  const createMutation = useMutation({
+    mutationFn: serverApi.create,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/servers'] });
+      setShowForm(false);
+      setEditingConnection(null);
+      toast({
+        title: "Success",
+        description: "Server connection created successfully.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create server connection.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Delete connection mutation
+  const deleteMutation = useMutation({
+    mutationFn: serverApi.delete,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/servers'] });
+      toast({
+        title: "Success",
+        description: "Server connection deleted successfully.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to delete server connection.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Test connection mutation
+  const testMutation = useMutation({
+    mutationFn: serverApi.test,
+    onSuccess: (data, serverId) => {
+      toast({
+        title: data.success ? "Connection Successful" : "Connection Failed",
+        description: data.success 
+          ? "Server is reachable and authentication succeeded."
+          : "Unable to connect to server or authentication failed.",
+        variant: data.success ? "default" : "destructive",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Test Failed",
+        description: error.message || "Failed to test server connection.",
+        variant: "destructive",
+      });
+    },
+  });
 
   const handleSaveConnection = (connection: ServerConnection) => {
-    console.log('Save connection:', connection);
-    setShowForm(false);
-    setEditingConnection(null);
+    // Only create new connections for now - editing will be added later
+    if (!editingConnection) {
+      createMutation.mutate(connection);
+    } else {
+      // TODO: Implement update functionality
+      toast({
+        title: "Not Implemented",
+        description: "Server connection editing is not yet implemented.",
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleTestConnection = async (connection: ServerConnection): Promise<boolean> => {
-    console.log('Test connection:', connection);
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    return Math.random() > 0.3;
+  const handleTestConnection = async (connection: ServerConnection & { id: string }): Promise<boolean> => {
+    try {
+      const result = await testMutation.mutateAsync(connection.id);
+      return result.success;
+    } catch (error) {
+      return false;
+    }
   };
 
   const handleEditConnection = (connection: ServerConnection & { id: string }) => {
@@ -59,8 +127,9 @@ export default function ServerConfiguration() {
   };
 
   const handleDeleteConnection = (connectionId: string) => {
-    console.log('Delete connection:', connectionId);
-    setConnections(prev => prev.filter(c => c.id !== connectionId));
+    if (window.confirm('Are you sure you want to delete this server connection? This action cannot be undone.')) {
+      deleteMutation.mutate(connectionId);
+    }
   };
 
   const getRoleBadges = (roles: string[]) => {

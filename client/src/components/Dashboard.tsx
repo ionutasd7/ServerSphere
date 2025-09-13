@@ -15,29 +15,88 @@ import {
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { Task } from "./TaskPanel";
-
-//todo: remove mock functionality
-const mockTasks: Task[] = [
-  {
-    id: '1',
-    command: 'Get-ADReplicationFailure -Target "DC01.contoso.com"',
-    status: 'running',
-    startTime: new Date(Date.now() - 45000),
-    output: 'Checking replication status...\nNo replication failures detected.'
-  },
-  {
-    id: '2', 
-    command: 'Get-CertificationAuthority | Get-CATemplate',
-    status: 'success',
-    startTime: new Date(Date.now() - 180000),
-    endTime: new Date(Date.now() - 120000),
-    output: 'Retrieved 12 certificate templates successfully.'
-  }
-];
+import { taskApi, serverApi } from "@/lib/api";
+import { socketService } from "@/lib/socket";
+import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
+import type { PowerShellTask } from "@shared/schema";
 
 export default function Dashboard() {
-  const [tasks, setTasks] = useState<Task[]>(mockTasks);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [lastRefresh, setLastRefresh] = useState(new Date());
+
+  // Fetch tasks using React Query
+  const { data: powerShellTasks = [], isLoading: tasksLoading } = useQuery({
+    queryKey: ['/api/tasks'],
+    queryFn: () => taskApi.getAll(),
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+
+  // Fetch servers for status tiles
+  const { data: servers = [], isLoading: serversLoading } = useQuery({
+    queryKey: ['/api/servers'],
+    queryFn: () => serverApi.getAll(),
+    refetchInterval: 60000, // Refresh every minute
+  });
+
+  // Convert PowerShell tasks to Task format
+  useEffect(() => {
+    const convertedTasks: Task[] = powerShellTasks.map((task: PowerShellTask) => ({
+      id: task.id,
+      command: task.command,
+      status: task.status as 'queued' | 'running' | 'success' | 'failed',
+      startTime: task.startTime ? new Date(task.startTime) : undefined,
+      endTime: task.endTime ? new Date(task.endTime) : undefined,
+      output: task.outputSummary || '',
+      error: task.errorSummary || undefined,
+    }));
+    setTasks(convertedTasks);
+  }, [powerShellTasks]);
+
+  // Setup Socket.IO for real-time task updates
+  useEffect(() => {
+    const socket = socketService.connect();
+
+    socketService.onTaskOutput((data) => {
+      setTasks(prev => prev.map(task => 
+        task.id === data.taskId 
+          ? { ...task, output: (task.output || '') + data.chunk + '\n' }
+          : task
+      ));
+    });
+
+    socketService.onTaskStarted((data) => {
+      setTasks(prev => prev.map(task => 
+        task.id === data.taskId 
+          ? { ...task, status: 'running' as const, startTime: new Date() }
+          : task
+      ));
+    });
+
+    socketService.onTaskCompleted((data) => {
+      setTasks(prev => prev.map(task => 
+        task.id === data.taskId 
+          ? { ...task, status: 'success' as const, endTime: new Date() }
+          : task
+      ));
+      // Refresh tasks data
+      queryClient.invalidateQueries({ queryKey: ['/api/tasks'] });
+    });
+
+    socketService.onTaskFailed((data) => {
+      setTasks(prev => prev.map(task => 
+        task.id === data.taskId 
+          ? { ...task, status: 'failed' as const, endTime: new Date(), error: data.error }
+          : task
+      ));
+      // Refresh tasks data
+      queryClient.invalidateQueries({ queryKey: ['/api/tasks'] });
+    });
+
+    return () => {
+      socketService.removeAllListeners();
+    };
+  }, []);
 
   // Simulate real-time updates
   useEffect(() => {
@@ -51,20 +110,37 @@ export default function Dashboard() {
   const handleRefresh = () => {
     console.log('Refreshing dashboard data...');
     setLastRefresh(new Date());
+    // Invalidate queries to force refresh
+    queryClient.invalidateQueries({ queryKey: ['/api/tasks'] });
+    queryClient.invalidateQueries({ queryKey: ['/api/servers'] });
   };
 
   const handleCancelTask = (taskId: string) => {
     console.log('Cancel task:', taskId);
+    // TODO: Implement task cancellation API call
     setTasks(prev => prev.filter(t => t.id !== taskId));
   };
 
-  const handleRetryTask = (taskId: string) => {
+  const handleRetryTask = async (taskId: string) => {
     console.log('Retry task:', taskId);
-    setTasks(prev => prev.map(t => 
-      t.id === taskId 
-        ? { ...t, status: 'queued' as const, error: undefined }
-        : t
-    ));
+    try {
+      const originalTask = tasks.find(t => t.id === taskId);
+      if (originalTask) {
+        // Create a new task with the same command
+        const newTask = await taskApi.create({
+          serverId: 'default-server-id', // TODO: Get server ID from original task
+          command: originalTask.command
+        });
+        
+        // Join the new task for real-time updates
+        socketService.joinTask(newTask.id);
+        
+        // Refresh tasks
+        queryClient.invalidateQueries({ queryKey: ['/api/tasks'] });
+      }
+    } catch (error) {
+      console.error('Failed to retry task:', error);
+    }
   };
 
   const handleClearCompleted = () => {
