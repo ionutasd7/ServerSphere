@@ -132,6 +132,47 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/tasks/:id/cancel", async (req, res) => {
+    try {
+      const task = await storage.getPowerShellTask(req.params.id);
+      if (!task) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      
+      // Update task status to cancelled
+      await storage.updatePowerShellTaskStatus(req.params.id, TaskStatusEnum.Enum.cancelled);
+      
+      // Emit cancellation event to connected clients
+      io.to(`task-${req.params.id}`).emit("task-cancelled", { taskId: req.params.id });
+      
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/tasks/:id/retry", async (req, res) => {
+    try {
+      const originalTask = await storage.getPowerShellTask(req.params.id);
+      if (!originalTask) {
+        return res.status(404).json({ error: "Task not found" });
+      }
+      
+      // Create a new task with the same command and server
+      const newTask = await storage.createPowerShellTask({
+        serverId: originalTask.serverId,
+        command: originalTask.command
+      });
+      
+      // Execute the new task
+      psExecutor.executeCommand(newTask);
+      
+      res.json({ taskId: newTask.id });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Active Directory Management
   app.get("/api/servers/:serverId/ad/users", async (req, res) => {
     try {

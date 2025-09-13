@@ -70,6 +70,16 @@ export const taskApi = {
 
   getLogs: (id: string): Promise<TaskLog[]> =>
     apiRequest(`/tasks/${id}/logs`),
+
+  cancel: (id: string): Promise<{ success: boolean }> =>
+    apiRequest(`/tasks/${id}/cancel`, {
+      method: 'POST',
+    }),
+
+  retry: (id: string): Promise<{ taskId: string }> =>
+    apiRequest(`/tasks/${id}/retry`, {
+      method: 'POST',
+    }),
 };
 
 // Active Directory API

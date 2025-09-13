@@ -93,10 +93,27 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ['/api/tasks'] });
     });
 
+    socketService.onTaskCancelled((data) => {
+      setTasks(prev => prev.filter(task => task.id !== data.taskId));
+      // Refresh tasks data
+      queryClient.invalidateQueries({ queryKey: ['/api/tasks'] });
+    });
+
     return () => {
       socketService.removeAllListeners();
     };
   }, []);
+
+  // Join task rooms for active tasks to receive real-time updates
+  useEffect(() => {
+    if (tasks.length > 0) {
+      tasks.forEach(task => {
+        if (task.status === 'running' || task.status === 'queued') {
+          socketService.joinTask(task.id);
+        }
+      });
+    }
+  }, [tasks]);
 
   // Simulate real-time updates
   useEffect(() => {
@@ -115,29 +132,26 @@ export default function Dashboard() {
     queryClient.invalidateQueries({ queryKey: ['/api/servers'] });
   };
 
-  const handleCancelTask = (taskId: string) => {
+  const handleCancelTask = async (taskId: string) => {
     console.log('Cancel task:', taskId);
-    // TODO: Implement task cancellation API call
-    setTasks(prev => prev.filter(t => t.id !== taskId));
+    try {
+      await taskApi.cancel(taskId);
+      // Tasks will be updated via Socket.IO event
+    } catch (error) {
+      console.error('Failed to cancel task:', error);
+    }
   };
 
   const handleRetryTask = async (taskId: string) => {
     console.log('Retry task:', taskId);
     try {
-      const originalTask = tasks.find(t => t.id === taskId);
-      if (originalTask) {
-        // Create a new task with the same command
-        const newTask = await taskApi.create({
-          serverId: 'default-server-id', // TODO: Get server ID from original task
-          command: originalTask.command
-        });
-        
-        // Join the new task for real-time updates
-        socketService.joinTask(newTask.id);
-        
-        // Refresh tasks
-        queryClient.invalidateQueries({ queryKey: ['/api/tasks'] });
-      }
+      const result = await taskApi.retry(taskId);
+      
+      // Join the new task for real-time updates
+      socketService.joinTask(result.taskId);
+      
+      // Refresh tasks
+      queryClient.invalidateQueries({ queryKey: ['/api/tasks'] });
     } catch (error) {
       console.error('Failed to retry task:', error);
     }
@@ -176,41 +190,56 @@ export default function Dashboard() {
 
       {/* Status Tiles */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatusTile
-          title="Domain Controller"
-          value="Online"
-          status="online"
-          description="Replication healthy"
-          icon={Server}
-          actionButton={<Button size="sm" variant="outline">View Details</Button>}
-        />
-        
-        <StatusTile
-          title="Certificate Authority"
-          value="Active"
-          status="online"
-          description="CRL valid for 7 days"
-          icon={Shield}
-          actionButton={<Button size="sm" variant="outline">Manage CA</Button>}
-        />
-        
-        <StatusTile
-          title="DNS Service"
-          value="Warning"
-          status="warning"
-          description="2 zones need attention"
-          icon={Database}
-          actionButton={<Button size="sm" variant="outline">Fix Issues</Button>}
-        />
-        
-        <StatusTile
-          title="Expiring Certificates"
-          value="12"
-          status="error"
-          description="Expiring in 30 days"
-          icon={AlertTriangle}
-          actionButton={<Button size="sm" variant="destructive">Review</Button>}
-        />
+        {serversLoading ? (
+          // Loading skeleton for servers
+          Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i} className="animate-pulse">
+              <CardContent className="p-6">
+                <div className="h-4 bg-muted rounded w-3/4 mb-2"></div>
+                <div className="h-6 bg-muted rounded w-1/2 mb-2"></div>
+                <div className="h-3 bg-muted rounded w-full"></div>
+              </CardContent>
+            </Card>
+          ))
+        ) : (
+          <>
+            <StatusTile
+              title="Domain Controller"
+              value={servers.filter(s => s.roles.includes('dc')).length > 0 ? "Online" : "Offline"}
+              status={servers.filter(s => s.roles.includes('dc')).length > 0 ? "online" : "error"}
+              description="Replication healthy"
+              icon={Server}
+              actionButton={<Button size="sm" variant="outline">View Details</Button>}
+            />
+            
+            <StatusTile
+              title="Certificate Authority"
+              value={servers.filter(s => s.roles.includes('ca')).length > 0 ? "Active" : "Inactive"}
+              status={servers.filter(s => s.roles.includes('ca')).length > 0 ? "online" : "error"}
+              description="CRL valid for 7 days"
+              icon={Shield}
+              actionButton={<Button size="sm" variant="outline">Manage CA</Button>}
+            />
+            
+            <StatusTile
+              title="DNS Service"
+              value={servers.filter(s => s.roles.includes('dns')).length > 0 ? "Active" : "Inactive"}
+              status={servers.filter(s => s.roles.includes('dns')).length > 0 ? "online" : "error"}
+              description="2 zones need attention"
+              icon={Database}
+              actionButton={<Button size="sm" variant="outline">Fix Issues</Button>}
+            />
+            
+            <StatusTile
+              title="Expiring Certificates"
+              value="12"
+              status="error"
+              description="Expiring in 30 days"
+              icon={AlertTriangle}
+              actionButton={<Button size="sm" variant="destructive">Review</Button>}
+            />
+          </>
+        )}
       </div>
 
       {/* Main Content Grid */}

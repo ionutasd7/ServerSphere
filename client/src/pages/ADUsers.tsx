@@ -6,7 +6,8 @@ import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { RefreshCw } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { RefreshCw, Server } from "lucide-react";
 import type { ADUser as DBADUser } from "@shared/schema";
 
 export default function ADUsers() {
@@ -112,6 +113,21 @@ export default function ADUsers() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {servers.length > 1 && (
+              <Select value={selectedServerId} onValueChange={setSelectedServerId}>
+                <SelectTrigger className="w-64" data-testid="select-server">
+                  <Server className="h-4 w-4 mr-2" />
+                  <SelectValue placeholder="Select a server" />
+                </SelectTrigger>
+                <SelectContent>
+                  {servers.map(server => (
+                    <SelectItem key={server.id} value={server.id}>
+                      {server.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <Button 
               variant="outline" 
               onClick={handleSyncUsers}
