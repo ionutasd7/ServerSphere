@@ -26,14 +26,14 @@ export default function Dashboard() {
   const [lastRefresh, setLastRefresh] = useState(new Date());
 
   // Fetch tasks using React Query
-  const { data: powerShellTasks = [], isLoading: tasksLoading } = useQuery({
+  const { data: powerShellTasks = [], isLoading: tasksLoading, error: tasksError } = useQuery({
     queryKey: ['/api/tasks'],
     queryFn: () => taskApi.getAll(),
     refetchInterval: 30000, // Refresh every 30 seconds
   });
 
   // Fetch servers for status tiles
-  const { data: servers = [], isLoading: serversLoading } = useQuery({
+  const { data: servers = [], isLoading: serversLoading, error: serversError } = useQuery({
     queryKey: ['/api/servers'],
     queryFn: () => serverApi.getAll(),
     refetchInterval: 60000, // Refresh every minute
@@ -188,6 +188,35 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Error banners */}
+      {serversError && (
+        <Card className="border-destructive bg-destructive/10">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <span className="font-medium">Failed to load server connections</span>
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">
+              {serversError instanceof Error ? serversError.message : 'Unknown error occurred'}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {tasksError && (
+        <Card className="border-destructive bg-destructive/10">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <span className="font-medium">Failed to load PowerShell tasks</span>
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">
+              {tasksError instanceof Error ? tasksError.message : 'Unknown error occurred'}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Status Tiles */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {serversLoading ? (
@@ -312,6 +341,7 @@ export default function Dashboard() {
             onCancelTask={handleCancelTask}
             onRetryTask={handleRetryTask}
             onClearCompleted={handleClearCompleted}
+            isLoading={tasksLoading}
           />
         </div>
       </div>

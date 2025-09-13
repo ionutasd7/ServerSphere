@@ -68,6 +68,12 @@ class SocketService {
     }
   }
 
+  onTaskCancelled(callback: (data: any) => void) {
+    if (this.socket) {
+      this.socket.on('task-cancelled', callback);
+    }
+  }
+
   removeAllListeners() {
     if (this.socket) {
       this.socket.removeAllListeners();
